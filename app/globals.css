@@ -1,0 +1,80 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-bg-base: #fafaf8;
+  --color-bg-surface: #ffffff;
+  --color-bg-subtle: #f4f3ef;
+  --color-text-primary: #1a1a18;
+  --color-text-secondary: #6b6a65;
+  --color-text-muted: #a8a79f;
+  --color-brand: #1c3a2f;
+  --color-brand-light: #2d5c4a;
+  --color-brand-accent: #4caf82;
+  --color-border: #e8e7e2;
+  --color-border-strong: #c8c7c0;
+  --color-success: #2e7d5e;
+  --color-warning: #b45309;
+  --color-error: #991b1b;
+}
+
+@layer base {
+  body {
+    background: var(--color-bg-base);
+    color: var(--color-text-primary);
+  }
+}
+
+@layer components {
+  .font-display {
+    font-family: var(--font-display), "Georgia", serif;
+  }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded border-0 px-7 py-3.5 text-[15px] font-medium tracking-wide transition-colors;
+    background: var(--color-brand);
+    color: #fff;
+    font-family: var(--font-sans), system-ui, sans-serif;
+  }
+
+  .btn-primary:hover {
+    background: var(--color-brand-light);
+  }
+
+  .btn-accent {
+    @apply inline-flex items-center justify-center rounded border-0 px-7 py-3.5 text-[15px] font-medium tracking-wide transition-colors;
+    background: var(--color-brand-accent);
+    color: #fff;
+    font-family: var(--font-sans), system-ui, sans-serif;
+  }
+
+  .btn-accent:hover {
+    filter: brightness(0.95);
+  }
+
+  .card {
+    @apply rounded-md border p-8;
+    background: var(--color-bg-surface);
+    border-color: var(--color-border);
+  }
+
+  .input {
+    @apply w-full rounded border px-4 py-3 text-[15px] transition-colors;
+    border-color: var(--color-border-strong);
+    background: var(--color-bg-surface);
+    color: var(--color-text-primary);
+    font-family: var(--font-sans), system-ui, sans-serif;
+  }
+
+  .input:focus {
+    outline: none;
+    border-color: var(--color-brand);
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
