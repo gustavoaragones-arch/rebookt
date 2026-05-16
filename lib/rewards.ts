@@ -2,7 +2,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 
 export type RedeemResult =
   | { valid: true; discount_pct: number }
-  | { valid: false; error: string };
+  | { valid: false; error: string; notFound?: boolean };
 
 export async function redeemRewardCode(
   code: string,
@@ -18,24 +18,24 @@ export async function redeemRewardCode(
     .maybeSingle();
 
   if (error || !row) {
-    return { valid: false, error: "Invalid code" };
+    return { valid: false, error: "Code not found.", notFound: true };
   }
 
   if (row.property_id !== propertyId) {
-    return { valid: false, error: "This code does not apply to this property" };
+    return { valid: false, error: "Code not found.", notFound: true };
   }
 
   if (row.status === "redeemed") {
-    return { valid: false, error: "This code has already been redeemed" };
+    return { valid: false, error: "This code has already been used." };
   }
 
   if (row.status === "expired") {
-    return { valid: false, error: "This code has expired" };
+    return { valid: false, error: "This code has expired." };
   }
 
   if (row.expires_at && new Date(row.expires_at) < new Date()) {
     await admin.from("reward_codes").update({ status: "expired" }).eq("id", row.id);
-    return { valid: false, error: "This code has expired" };
+    return { valid: false, error: "This code has expired." };
   }
 
   return { valid: true, discount_pct: Number(row.discount_pct) };

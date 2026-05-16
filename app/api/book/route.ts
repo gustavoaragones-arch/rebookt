@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
+import { computeGuestBookingPrice } from "@/lib/booking-pricing";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { computePriceBreakdown } from "@/lib/pricing";
 import { redeemRewardCode } from "@/lib/rewards";
 import { getStripe } from "@/lib/stripe";
 import { requireStripeCheckoutEnv } from "@/lib/env";
@@ -44,17 +44,27 @@ export async function POST(req: Request) {
     const check_out = body.check_out as string | undefined;
     const guest_email = body.guest_email as string | undefined;
     const guest_phone = (body.guest_phone as string | undefined) ?? undefined;
-    const guest_name = (body.guest_name as string | undefined) ?? undefined;
+    const guest_name = body.guest_name as string | undefined;
     const reward_code = (body.reward_code as string | undefined) ?? undefined;
 
-    if (!property_id || !check_in || !check_out || !guest_email) {
+    if (!property_id || !check_in || !check_out || !guest_email || !guest_name?.trim()) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
     }
 
     const checkIn = parseLocalDate(check_in);
     const checkOut = parseLocalDate(check_out);
-    if (!checkIn || !checkOut || checkOut <= checkIn) {
+    if (!checkIn || !checkOut) {
       return NextResponse.json({ error: "Invalid dates" }, { status: 400 });
+    }
+
+    if (checkOut <= checkIn) {
+      return NextResponse.json({ error: "Check-out must be after check-in." }, { status: 400 });
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    if (checkIn < todayStart) {
+      return NextResponse.json({ error: "Check-in cannot be in the past." }, { status: 400 });
     }
 
     const admin = createAdminClient();
@@ -70,7 +80,7 @@ export async function POST(req: Request) {
 
     const nights = Math.round((checkOut.getTime() - checkIn.getTime()) / 86400000);
     if (nights < 1) {
-      return NextResponse.json({ error: "Minimum one night" }, { status: 400 });
+      return NextResponse.json({ error: "Check-out must be after check-in." }, { status: 400 });
     }
 
     const { data: blocked } = await admin
@@ -82,7 +92,10 @@ export async function POST(req: Request) {
     for (const d of eachNightInclusive(checkIn, checkOut)) {
       const ymd = formatYmd(d);
       if (blockedSet.has(ymd)) {
-        return NextResponse.json({ error: "Selected dates include unavailable nights" }, { status: 400 });
+        return NextResponse.json(
+          { error: "Those dates include nights that are unavailable." },
+          { status: 400 }
+        );
       }
     }
 
@@ -91,20 +104,27 @@ export async function POST(req: Request) {
     if (reward_code?.trim()) {
       const redeem = await redeemRewardCode(reward_code, property_id);
       if (!redeem.valid) {
-        return NextResponse.json({ error: redeem.error }, { status: 400 });
+        return NextResponse.json(
+          { error: "Reward code is invalid or expired." },
+          { status: 400 }
+        );
       }
       rewardPct = redeem.discount_pct;
       rewardCodeNormalized = reward_code.trim().toUpperCase();
     }
 
-    const breakdown = computePriceBreakdown(
+    const cleaning = Number(property.cleaning_fee ?? 0);
+    const price = computeGuestBookingPrice(
       nights,
       Number(property.base_price),
-      Number(property.cleaning_fee ?? 0),
+      cleaning,
       rewardPct
     );
+    if (!price) {
+      return NextResponse.json({ error: "Unable to calculate total" }, { status: 400 });
+    }
 
-    const totalInCents = Math.round(breakdown.finalTotal * 100);
+    const totalInCents = Math.round(price.total * 100);
     if (totalInCents < 50) {
       return NextResponse.json({ error: "Total is too low for checkout" }, { status: 400 });
     }
@@ -145,7 +165,7 @@ export async function POST(req: Request) {
       guest_name: guest_name ?? null,
       check_in,
       check_out,
-      total_price: breakdown.finalTotal,
+      total_price: price.total,
       status: "pending",
       stripe_session_id: session.id,
     });

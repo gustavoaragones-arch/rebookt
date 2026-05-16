@@ -7,18 +7,16 @@ export async function POST(req: Request) {
     const code = body.code as string | undefined;
     const property_id = body.property_id as string | undefined;
     if (!code || !property_id) {
-      return NextResponse.json(
-        { valid: false, error: "code and property_id required" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "code and property_id required" }, { status: 400 });
     }
 
     const result = await redeemRewardCode(code, property_id);
     if (!result.valid) {
-      return NextResponse.json({ valid: false, error: result.error });
+      const status = result.notFound ? 404 : 400;
+      return NextResponse.json({ error: result.error }, { status });
     }
     return NextResponse.json({ valid: true, discount_pct: result.discount_pct });
   } catch {
-    return NextResponse.json({ valid: false, error: "Invalid request" }, { status: 400 });
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
 }
