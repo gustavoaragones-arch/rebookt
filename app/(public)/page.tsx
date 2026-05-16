@@ -1,7 +1,9 @@
 import Image from "next/image";
 import Link from "next/link";
 import { RoiCalculator } from "./_components/roi-calculator";
+import { SiteFooter } from "./_components/site-footer";
 import { WidgetDemo } from "./_components/widget-demo";
+import { WidgetEmbedSnippet } from "./_components/widget-embed-snippet";
 import { env } from "@/lib/env";
 
 const heroImage =
@@ -22,6 +24,9 @@ export default function LandingPage() {
             <a href="#pricing" className="hover:text-[var(--color-text-primary)]">
               Pricing
             </a>
+            <Link href="/about" className="hover:text-[var(--color-text-primary)]">
+              About
+            </Link>
             <Link href="/login" className="hover:text-[var(--color-text-primary)]">
               Sign in
             </Link>
@@ -140,15 +145,13 @@ export default function LandingPage() {
       </section>
 
       <section className="border-t border-[var(--color-border)] bg-[var(--color-bg-surface)] py-24">
-        <div className="mx-auto grid max-w-6xl items-start gap-12 px-6 lg:grid-cols-2">
+        <div className="mx-auto grid max-w-6xl items-start gap-12 px-6 lg:grid-cols-2 lg:gap-16">
           <div>
             <h2 className="font-display text-3xl text-[var(--color-brand)]">Widget demo</h2>
             <p className="mt-4 text-sm leading-relaxed text-[var(--color-text-secondary)]">
               Paste one line of code into your website. The widget does the rest.
             </p>
-            <pre className="mt-8 overflow-x-auto rounded-md border border-[var(--color-border)] bg-[var(--color-bg-subtle)] p-4 font-mono text-xs text-[var(--color-text-primary)]">
-{`<script src="${appUrl}/widget.js" data-property="your-slug"></script>`}
-            </pre>
+            <WidgetEmbedSnippet appUrl={appUrl} />
           </div>
           <WidgetDemo />
         </div>
@@ -164,6 +167,7 @@ export default function LandingPage() {
             <li>Embeddable booking widget</li>
             <li>Guest contact database</li>
             <li>Stripe-powered payments</li>
+            <li>Guest appreciation rewards — automated</li>
           </ul>
           <Link href="/login" className="btn-accent mt-10 w-full justify-center">
             Start for free — 14-day trial
@@ -185,9 +189,7 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <footer className="border-t border-[var(--color-border)] py-10 text-center text-xs text-[var(--color-text-muted)]">
-        © {new Date().getFullYear()} Rebookt
-      </footer>
+      <SiteFooter />
     </div>
   );
 }
