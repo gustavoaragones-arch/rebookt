@@ -1,26 +1,14 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendGarEmail } from "@/lib/emails";
+import { sendGAREmail } from "@/lib/emails";
 import { env } from "@/lib/env";
-import { generateRewardCode } from "@/lib/reward-code";
-
-async function ensureUniqueRewardCode(admin: ReturnType<typeof createAdminClient>): Promise<string> {
-  for (let i = 0; i < 8; i++) {
-    const code = generateRewardCode();
-    const { data } = await admin.from("reward_codes").select("id").eq("code", code).maybeSingle();
-    if (!data) return code;
-  }
-  throw new Error("Could not allocate reward code");
-}
+import { generateRewardCode, markRewardCodeSent } from "@/lib/gar";
 
 export async function POST(req: Request) {
   try {
-    const secret = env.CRON_SECRET;
-    if (secret) {
-      const auth = req.headers.get("authorization");
-      if (auth !== `Bearer ${secret}`) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
+    const auth = req.headers.get("authorization");
+    if (!env.CRON_SECRET || auth !== `Bearer ${env.CRON_SECRET}`) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
     const body = await req.json();
@@ -44,7 +32,7 @@ export async function POST(req: Request) {
     const { data: property, error: pErr } = await admin
       .from("properties")
       .select(
-        "id, name, slug, gar_discount_pct, gar_google_business_url, gar_message_tone, user_id, gar_enabled"
+        "id, name, slug, gar_discount_pct, gar_google_business_url, user_id, gar_enabled"
       )
       .eq("id", property_id)
       .maybeSingle();
@@ -55,48 +43,47 @@ export async function POST(req: Request) {
 
     const { data: hostUser } = await admin
       .from("users")
-      .select("email")
+      .select("email, full_name")
       .eq("id", property.user_id as string)
       .maybeSingle();
 
-    const code = await ensureUniqueRewardCode(admin);
-    const sentAt = new Date();
-    const expires = new Date(sentAt);
-    expires.setUTCDate(expires.getUTCDate() + 90);
-    const discountPct = Number(property.gar_discount_pct ?? 5);
+    const hostName =
+      (hostUser?.full_name as string | null)?.trim() ||
+      (hostUser?.email as string)?.split("@")[0] ||
+      "Host";
 
-    await admin.from("reward_codes").insert({
-      property_id,
-      guest_id,
-      code,
-      discount_pct: discountPct,
-      status: "pending",
-      sent_at: sentAt.toISOString(),
-      expires_at: expires.toISOString(),
+    const code = await generateRewardCode({
+      propertyId: property_id,
+      guestId: guest_id,
+      discountPct: Number(property.gar_discount_pct ?? 5),
     });
+
+    if (!code) {
+      return NextResponse.json({ error: "Active reward code already exists" }, { status: 409 });
+    }
 
     const appUrl = env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-    const hostName = (hostUser?.email as string)?.split("@")[0] ?? "Host";
-    const tone = (property.gar_message_tone as string) === "formal" ? "formal" : "casual";
+    const guestFirstName = (guest.first_name as string) || (guest.email as string).split("@")[0];
 
-    await sendGarEmail({
-      to: guest.email as string,
-      firstName: (guest.first_name as string) || "",
-      hostName,
+    await sendGAREmail({
+      guestFirstName,
+      guestEmail: guest.email as string,
       propertyName: property.name as string,
-      googleReviewUrl: property.gar_google_business_url as string,
+      hostName,
       rewardCode: code,
-      discountPct,
+      discountPct: Number(property.gar_discount_pct ?? 5),
+      googleReviewUrl: property.gar_google_business_url as string,
       directBookingUrl: `${appUrl}/p/${property.slug as string}`,
-      tone,
     });
+
+    await markRewardCodeSent(code);
 
     await admin.from("messages").insert({
       guest_id,
       type: "email",
       template: "gar_invite",
       status: "sent",
-      sent_at: sentAt.toISOString(),
+      sent_at: new Date().toISOString(),
     });
 
     return NextResponse.json({ ok: true, code });

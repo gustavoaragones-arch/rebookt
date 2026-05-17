@@ -1,209 +1,191 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendGarEmail, sendRebookingEmail } from "@/lib/emails";
+import { sendGAREmail, sendRebookingEmail } from "@/lib/emails";
 import { env } from "@/lib/env";
-import { generateRewardCode } from "@/lib/reward-code";
+import { generateRewardCode, markRewardCodeSent } from "@/lib/gar";
 
-function ymdShiftDays(days: number): string {
+export const runtime = "nodejs";
+
+function ymdDaysAgo(days: number): string {
   const d = new Date();
-  d.setUTCDate(d.getUTCDate() + days);
-  return d.toISOString().slice(0, 10);
+  d.setDate(d.getDate() - days);
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
-async function ensureUniqueRewardCode(admin: ReturnType<typeof createAdminClient>): Promise<string> {
-  for (let i = 0; i < 8; i++) {
-    const code = generateRewardCode();
-    const { data } = await admin.from("reward_codes").select("id").eq("code", code).maybeSingle();
-    if (!data) return code;
-  }
-  throw new Error("Could not allocate reward code");
+function hostDisplayName(host: { full_name?: string | null; email?: string | null } | null): string {
+  if (host?.full_name?.trim()) return host.full_name.trim();
+  if (host?.email) return host.email.split("@")[0];
+  return "Your host";
 }
 
-async function runAutomation(req: Request) {
-  const secret = env.CRON_SECRET;
-  if (secret) {
-    const auth = req.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+function nestedProperty(
+  rel: unknown
+): { name: string; slug: string } | null {
+  if (!rel) return null;
+  if (Array.isArray(rel)) {
+    const p = rel[0] as { name?: string; slug?: string } | undefined;
+    return p?.slug ? { name: p.name ?? "", slug: p.slug } : null;
+  }
+  const p = rel as { name?: string; slug?: string };
+  return p?.slug ? { name: p.name ?? "", slug: p.slug } : null;
+}
+
+export async function POST(req: NextRequest) {
+  const auth = req.headers.get("authorization");
+  if (!env.CRON_SECRET || auth !== `Bearer ${env.CRON_SECRET}`) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const admin = createAdminClient();
+  const supabase = createAdminClient();
   const appUrl = env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-  const rebookingCheckout = ymdShiftDays(-2);
+  const results = { rebooking: 0, gar: 0, errors: [] as string[] };
 
-  const { data: rebookCandidates, error: rbErr } = await admin
-    .from("bookings")
-    .select("id, guest_email, guest_name, guest_phone, check_in, check_out, property_id, rebooking_sent_at")
-    .eq("status", "confirmed")
-    .is("rebooking_sent_at", null)
-    .eq("check_out", rebookingCheckout);
+  const rebookingDateStr = ymdDaysAgo(2);
+
+  const { data: rebookingGuests, error: rbErr } = await supabase
+    .from("guests")
+    .select(
+      `
+      id, email, first_name, property_id,
+      properties ( name, slug )
+    `
+    )
+    .eq("last_stay_date", rebookingDateStr)
+    .is("rebooking_sent_at", null);
 
   if (rbErr) {
     console.error(rbErr);
     return NextResponse.json({ error: "rebooking query failed" }, { status: 500 });
   }
 
-  let rebookingSent = 0;
-  for (const b of rebookCandidates ?? []) {
-    const { data: props } = await admin
-      .from("properties")
-      .select("name, slug, user_id")
-      .eq("id", b.property_id as string)
-      .maybeSingle();
-
-    if (!props?.slug) continue;
-
-    const { data: hostUser } = await admin
-      .from("users")
-      .select("email")
-      .eq("id", props.user_id as string)
-      .maybeSingle();
-
-    const first = (b.guest_name as string | null)?.split(/\s+/)[0] ?? "";
-    const hostEmail = (hostUser?.email as string) ?? "Host";
-    const directUrl = `${appUrl}/p/${props.slug}`;
-
+  for (const guest of rebookingGuests ?? []) {
     try {
+      const property = nestedProperty(guest.properties);
+      if (!property?.slug) continue;
+
+      const directBookingUrl = `${appUrl}/p/${property.slug}`;
+      const guestFirstName = (guest.first_name as string) || (guest.email as string).split("@")[0];
+
       await sendRebookingEmail({
-        to: b.guest_email as string,
-        firstName: first,
-        propertyName: props.name as string,
-        hostLabel: hostEmail,
-        directBookingUrl: directUrl,
+        guestFirstName,
+        guestEmail: guest.email as string,
+        propertyName: property.name,
+        directBookingUrl,
       });
-      await admin
-        .from("bookings")
-        .update({ rebooking_sent_at: new Date().toISOString() })
-        .eq("id", b.id as string);
 
-      const { data: guest } = await admin
+      await supabase
         .from("guests")
-        .select("id")
-        .eq("property_id", b.property_id as string)
-        .eq("email", b.guest_email as string)
-        .maybeSingle();
+        .update({ rebooking_sent_at: new Date().toISOString() })
+        .eq("id", guest.id);
 
-      if (guest?.id) {
-        await admin.from("messages").insert({
-          guest_id: guest.id,
-          type: "email",
-          template: "rebooking",
-          status: "sent",
-          sent_at: new Date().toISOString(),
-        });
-      }
-      rebookingSent++;
-    } catch (e) {
-      console.error(e);
+      await supabase.from("messages").insert({
+        guest_id: guest.id,
+        type: "email",
+        template: "rebooking",
+        status: "sent",
+        sent_at: new Date().toISOString(),
+      });
+
+      results.rebooking++;
+    } catch (err) {
+      results.errors.push(`Rebooking failed for guest ${guest.id}: ${String(err)}`);
     }
   }
 
-  const { data: garProperties, error: gpErr } = await admin
+  const { data: garProperties, error: gpErr } = await supabase
     .from("properties")
     .select(
-      "id, name, slug, gar_trigger_delay_days, gar_discount_pct, gar_google_business_url, gar_message_tone, user_id, gar_enabled"
+      "id, name, slug, gar_discount_pct, gar_google_business_url, gar_trigger_delay_days, user_id"
     )
     .eq("gar_enabled", true)
-    .not("gar_google_business_url", "is", null);
+    .not("gar_google_business_url", "is", null)
+    .not("gar_discount_pct", "is", null);
 
   if (gpErr) {
     console.error(gpErr);
     return NextResponse.json({ error: "gar properties query failed" }, { status: 500 });
   }
 
-  let garSent = 0;
-  for (const p of garProperties ?? []) {
-    const delay = Number(p.gar_trigger_delay_days ?? 5);
-    const targetCheckout = ymdShiftDays(-delay);
+  for (const property of garProperties ?? []) {
+    const triggerDays = Number(property.gar_trigger_delay_days ?? 5);
+    const garDateStr = ymdDaysAgo(triggerDays);
 
-    const { data: garBookings } = await admin
-      .from("bookings")
-      .select("id, guest_email, guest_name, guest_phone, check_in, check_out")
-      .eq("property_id", p.id as string)
-      .eq("status", "confirmed")
-      .is("gar_sent_at", null)
-      .eq("check_out", targetCheckout);
+    const { data: garGuests } = await supabase
+      .from("guests")
+      .select("id, email, first_name, property_id")
+      .eq("property_id", property.id)
+      .eq("last_stay_date", garDateStr)
+      .is("gar_sent_at", null);
 
-    for (const b of garBookings ?? []) {
+    const { data: hostUser } = await supabase
+      .from("users")
+      .select("email, full_name")
+      .eq("id", property.user_id as string)
+      .maybeSingle();
+
+    const hostName = hostDisplayName(hostUser);
+
+    for (const guest of garGuests ?? []) {
       try {
-        const { data: guest } = await admin
-          .from("guests")
-          .select("id, first_name")
-          .eq("property_id", p.id as string)
-          .eq("email", b.guest_email as string)
-          .maybeSingle();
-
-        if (!guest?.id) continue;
-
-        const code = await ensureUniqueRewardCode(admin);
-        const sentAt = new Date();
-        const expires = new Date(sentAt);
-        expires.setUTCDate(expires.getUTCDate() + 90);
-
-        const discountPct = Number(p.gar_discount_pct ?? 5);
-
-        await admin.from("reward_codes").insert({
-          property_id: p.id as string,
-          guest_id: guest.id,
-          code,
-          discount_pct: discountPct,
-          status: "pending",
-          sent_at: sentAt.toISOString(),
-          expires_at: expires.toISOString(),
+        const directBookingUrl = `${appUrl}/p/${property.slug as string}`;
+        const code = await generateRewardCode({
+          propertyId: property.id as string,
+          guestId: guest.id as string,
+          discountPct: Number(property.gar_discount_pct),
         });
 
-        const { data: hostUser } = await admin
-          .from("users")
-          .select("email")
-          .eq("id", p.user_id as string)
-          .maybeSingle();
+        if (!code) {
+          results.errors.push(`Skipped GAR for guest ${guest.id} — active code already exists`);
+          continue;
+        }
 
-        const users = hostUser as { email: string } | null;
-        const hostName = users?.email?.split("@")[0] ?? "Host";
-        const tone = (p.gar_message_tone as string) === "formal" ? "formal" : "casual";
+        const guestFirstName =
+          (guest.first_name as string) || (guest.email as string).split("@")[0];
 
-        await sendGarEmail({
-          to: b.guest_email as string,
-          firstName: (guest.first_name as string) || (b.guest_name as string)?.split(/\s+/)[0] || "",
+        await sendGAREmail({
+          guestFirstName,
+          guestEmail: guest.email as string,
+          propertyName: property.name as string,
           hostName,
-          propertyName: p.name as string,
-          googleReviewUrl: p.gar_google_business_url as string,
           rewardCode: code,
-          discountPct,
-          directBookingUrl: `${appUrl}/p/${p.slug as string}`,
-          tone,
+          discountPct: Number(property.gar_discount_pct),
+          googleReviewUrl: property.gar_google_business_url as string,
+          directBookingUrl,
         });
 
-        await admin.from("bookings").update({ gar_sent_at: sentAt.toISOString() }).eq("id", b.id as string);
+        await markRewardCodeSent(code);
 
-        await admin.from("messages").insert({
+        await supabase
+          .from("guests")
+          .update({ gar_sent_at: new Date().toISOString() })
+          .eq("id", guest.id);
+
+        await supabase.from("messages").insert({
           guest_id: guest.id,
           type: "email",
           template: "gar_invite",
           status: "sent",
-          sent_at: sentAt.toISOString(),
+          sent_at: new Date().toISOString(),
         });
 
-        garSent++;
-      } catch (e) {
-        console.error(e);
+        results.gar++;
+      } catch (err) {
+        results.errors.push(`GAR failed for guest ${guest.id}: ${String(err)}`);
       }
     }
   }
 
-  return NextResponse.json({
-    ok: true,
-    rebooking_checkout_date: rebookingCheckout,
-    rebooking_sent: rebookingSent,
-    gar_sent: garSent,
-  });
+  const { error: expireErr } = await supabase.rpc("expire_reward_codes");
+  if (expireErr) {
+    results.errors.push(`expire_reward_codes: ${expireErr.message}`);
+  }
+
+  return NextResponse.json({ success: true, results });
 }
 
-export async function POST(req: Request) {
-  return runAutomation(req);
-}
-
-export async function GET(req: Request) {
-  return runAutomation(req);
+export async function GET(req: NextRequest) {
+  return POST(req);
 }

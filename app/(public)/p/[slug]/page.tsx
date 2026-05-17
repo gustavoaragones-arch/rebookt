@@ -63,7 +63,7 @@ async function PropertyBookingContent({ slug }: { slug: string }) {
   const supabase = await createClient();
   const { data: property, error } = await supabase
     .from("properties")
-    .select("id, name, slug, description, base_price, cleaning_fee, images")
+    .select("id, name, slug, description, base_price, cleaning_fee, images, location")
     .eq("slug", slug)
     .maybeSingle();
 
@@ -98,7 +98,7 @@ async function PropertyBookingContent({ slug }: { slug: string }) {
             {bookingProperty.name}
           </h1>
           <p className="mt-3 font-sans text-[13px] font-normal uppercase tracking-[0.08em] text-[var(--color-text-muted)]">
-            {bookingProperty.slug}
+            {(property.location as string | null) ?? bookingProperty.slug}
           </p>
           {bookingProperty.description ? (
             <p className="mt-6 font-sans text-[15px] leading-[1.7] text-[var(--color-text-secondary)]">

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { PROTOTYPE_MODE } from "@/lib/config";
 import { computeGuestBookingPrice } from "@/lib/booking-pricing";
 import { formatYmd, nightsBetween } from "@/lib/booking-dates";
 import { DatePicker } from "./DatePicker";
@@ -121,16 +122,23 @@ export function BookingPanel({ property, blockedDates }: Props) {
           reward_code: rewardDiscount != null && rewardCode.trim() ? rewardCode.trim() : undefined,
         }),
       });
-      const data = (await res.json()) as { url?: string; error?: string };
+      const data = (await res.json()) as {
+        url?: string;
+        success?: boolean;
+        booking_id?: string;
+        error?: string;
+      };
       if (!res.ok) {
-        setError(data.error ?? "Booking failed.");
+        setError(data.error ?? "Something went wrong. Please try again.");
         return;
       }
-      if (data.url) {
+      if (PROTOTYPE_MODE && data.success && data.booking_id) {
+        window.location.href = `/success?booking_id=${data.booking_id}`;
+      } else if (data.url) {
         window.location.href = data.url;
-        return;
+      } else {
+        setError(data.error ?? "Something went wrong. Please try again.");
       }
-      setError("No checkout URL returned.");
     } catch {
       setError("Booking failed.");
     } finally {
@@ -294,10 +302,12 @@ export function BookingPanel({ property, blockedDates }: Props) {
               {isSubmitting ? (
                 <>
                   <Spinner />
-                  <span>Redirecting…</span>
+                  <span>{PROTOTYPE_MODE ? "Sending request…" : "Redirecting…"}</span>
                 </>
               ) : (
-                <span>Book Direct — {totalLabel}</span>
+                <span>
+                  {PROTOTYPE_MODE ? "Request Booking" : "Book Direct"} — {totalLabel}
+                </span>
               )}
             </button>
             {error ? <p className="mt-3 text-center text-[13px] text-[var(--color-error)]">{error}</p> : null}

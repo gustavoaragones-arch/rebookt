@@ -2,11 +2,8 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
-import {
-  addBlockedDateAction,
-  removeBlockedDateAction,
-  updateGarSettingsAction,
-} from "./actions";
+import { addBlockedDateAction, removeBlockedDateAction } from "./actions";
+import { GarSettingsPanel } from "./GarSettingsPanel";
 
 export default async function PropertyDetailPage({ params }: { params: { id: string } }) {
   const supabase = await createClient();
@@ -23,6 +20,12 @@ export default async function PropertyDetailPage({ params }: { params: { id: str
     .maybeSingle();
 
   if (error || !property) notFound();
+
+  const { data: hostProfile } = await supabase
+    .from("users")
+    .select("full_name")
+    .eq("id", user.id)
+    .maybeSingle();
 
   const { data: blocked } = await supabase
     .from("blocked_dates")
@@ -61,58 +64,16 @@ export default async function PropertyDetailPage({ params }: { params: { id: str
         </pre>
       </section>
 
-      <section className="card max-w-xl">
-        <h2 className="font-display text-xl text-[var(--color-brand)]">Guest appreciation rewards</h2>
-        <form action={updateGarSettingsAction} className="mt-6 space-y-4">
-          <input type="hidden" name="property_id" value={property.id} />
-          <label className="flex items-center gap-3 text-sm text-[var(--color-text-secondary)]">
-            <input type="checkbox" name="gar_enabled" defaultChecked={property.gar_enabled === true} />
-            Enable GAR for this property
-          </label>
-          <label className="block text-xs font-medium uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
-            Reward discount %
-            <input
-              className="input mt-2"
-              name="gar_discount_pct"
-              type="number"
-              min={1}
-              max={50}
-              defaultValue={Number(property.gar_discount_pct ?? 5)}
-            />
-          </label>
-          <label className="block text-xs font-medium uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
-            Trigger delay (days after checkout)
-            <input
-              className="input mt-2"
-              name="gar_trigger_delay_days"
-              type="number"
-              min={1}
-              max={60}
-              defaultValue={Number(property.gar_trigger_delay_days ?? 5)}
-            />
-          </label>
-          <label className="block text-xs font-medium uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
-            Google Business review URL
-            <input
-              className="input mt-2"
-              name="gar_google_business_url"
-              type="url"
-              defaultValue={property.gar_google_business_url ?? ""}
-              placeholder="https://g.page/..."
-            />
-          </label>
-          <label className="block text-xs font-medium uppercase tracking-[0.08em] text-[var(--color-text-secondary)]">
-            Message tone
-            <select className="input mt-2" name="gar_message_tone" defaultValue={property.gar_message_tone ?? "casual"}>
-              <option value="casual">Casual</option>
-              <option value="formal">Formal</option>
-            </select>
-          </label>
-          <button type="submit" className="btn-primary">
-            Save GAR settings
-          </button>
-        </form>
-      </section>
+      <GarSettingsPanel
+        property={{
+          id: property.id,
+          gar_enabled: property.gar_enabled === true,
+          gar_discount_pct: Number(property.gar_discount_pct ?? 5),
+          gar_trigger_delay_days: Number(property.gar_trigger_delay_days ?? 5),
+          gar_google_business_url: property.gar_google_business_url,
+        }}
+        hostFullName={(hostProfile?.full_name as string | null) ?? null}
+      />
 
       <section className="card max-w-xl">
         <h2 className="font-display text-xl text-[var(--color-brand)]">Blocked dates</h2>

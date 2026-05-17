@@ -57,6 +57,7 @@ export async function POST(req: Request) {
     .update({
       status: "confirmed",
       total_price: amountTotal,
+      reward_code_used: reward_code || null,
     })
     .eq("stripe_session_id", session.id);
 
@@ -76,7 +77,7 @@ export async function POST(req: Request) {
       phone: guest_phone,
       first_name,
       last_name,
-      last_stay_date: check_in,
+      last_stay_date: check_out,
       source: "direct",
     },
     { onConflict: "property_id,email" }

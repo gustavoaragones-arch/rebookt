@@ -37,10 +37,11 @@ export default async function SuccessPage({
 }: {
   searchParams: { session_id?: string; booking_id?: string };
 }) {
-  const sessionId = searchParams.session_id;
-  const bookingId = searchParams.booking_id;
+  const sessionId = searchParams.session_id ?? null;
+  const bookingId = searchParams.booking_id ?? null;
 
   let guestEmail: string | null = null;
+  let bookingStatus: string | null = null;
   let propertyName: string | null = null;
   let propertySlug: string | null = null;
   let checkIn: string | null = null;
@@ -51,7 +52,7 @@ export default async function SuccessPage({
     const admin = createAdminClient();
     const base = admin
       .from("bookings")
-      .select("guest_email, check_in, check_out, total_price, property_id");
+      .select("guest_email, check_in, check_out, total_price, property_id, status");
     const filtered = sessionId
       ? base.eq("stripe_session_id", sessionId)
       : base.eq("id", bookingId as string);
@@ -59,6 +60,7 @@ export default async function SuccessPage({
 
     if (booking) {
       guestEmail = booking.guest_email as string;
+      bookingStatus = booking.status as string;
       checkIn = booking.check_in as string;
       checkOut = booking.check_out as string;
       total = Number(booking.total_price);
@@ -79,25 +81,25 @@ export default async function SuccessPage({
     guestEmail && propertyName && checkIn && checkOut && total != null && propertySlug
   );
 
+  const isRequested = bookingStatus === "requested";
+  const headline = isRequested ? "Booking request sent." : "You're booked.";
+  const subtext = isRequested
+    ? guestEmail
+      ? `The host will confirm your dates and reach out within 24 hours. A summary has been sent to ${guestEmail}.`
+      : "The host will confirm your dates and reach out within 24 hours."
+    : guestEmail
+      ? `A confirmation has been sent to ${guestEmail}.`
+      : "Thank you for booking direct. If you completed checkout, a confirmation email is on the way.";
+
   return (
     <div className="min-h-screen bg-[var(--color-bg-subtle)] px-4 py-16 text-[var(--color-text-primary)]">
       <div className="mx-auto max-w-[520px] rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-surface)] px-8 py-12 sm:px-12 sm:py-12">
         <SuccessCheck />
         <h1 className="mt-8 text-center font-display text-[36px] leading-tight text-[var(--color-text-primary)]">
-          You&apos;re booked.
+          {headline}
         </h1>
         <p className="mt-6 text-center font-sans text-[15px] leading-relaxed text-[var(--color-text-secondary)]">
-          {guestEmail ? (
-            <>
-              A confirmation has been sent to{" "}
-              <span className="text-[var(--color-text-primary)]">{guestEmail}</span>
-              {"."}
-            </>
-          ) : (
-            <>
-              Thank you for booking direct. If you completed checkout, a confirmation email is on the way.
-            </>
-          )}
+          {subtext}
         </p>
 
         {hasSummary && guestEmail && propertyName && checkIn && checkOut && total != null && propertySlug ? (

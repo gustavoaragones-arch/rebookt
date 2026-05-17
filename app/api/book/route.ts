@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { computeGuestBookingPrice } from "@/lib/booking-pricing";
+import { PROTOTYPE_MODE } from "@/lib/config";
+import { sendGuestConfirmation, sendHostNotification } from "@/lib/emails";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { redeemRewardCode } from "@/lib/rewards";
 import { getStripe } from "@/lib/stripe";
@@ -37,7 +39,6 @@ function formatYmd(d: Date): string {
 
 export async function POST(req: Request) {
   try {
-    const { appUrl } = requireStripeCheckoutEnv();
     const body = await req.json();
     const property_id = body.property_id as string | undefined;
     const check_in = body.check_in as string | undefined;
@@ -70,7 +71,7 @@ export async function POST(req: Request) {
     const admin = createAdminClient();
     const { data: property, error: pErr } = await admin
       .from("properties")
-      .select("id, name, slug, base_price, cleaning_fee")
+      .select("id, name, slug, base_price, cleaning_fee, user_id")
       .eq("id", property_id)
       .maybeSingle();
 
@@ -124,7 +125,74 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Unable to calculate total" }, { status: 400 });
     }
 
-    const totalInCents = Math.round(price.total * 100);
+    const total = price.total;
+
+    if (PROTOTYPE_MODE) {
+      const { data: booking, error: bookingError } = await admin
+        .from("bookings")
+        .insert({
+          property_id,
+          guest_email,
+          guest_phone: guest_phone ?? null,
+          guest_name: guest_name.trim(),
+          check_in,
+          check_out,
+          total_price: total,
+          status: "requested",
+          reward_code_used: rewardCodeNormalized ?? null,
+        })
+        .select()
+        .single();
+
+      if (bookingError || !booking) {
+        return NextResponse.json(
+          { error: "Could not save your booking request. Please try again." },
+          { status: 500 }
+        );
+      }
+
+      const nameParts = guest_name.trim().split(/\s+/);
+      await admin.from("guests").upsert(
+        {
+          property_id,
+          email: guest_email,
+          phone: guest_phone ?? null,
+          first_name: nameParts[0] ?? null,
+          last_name: nameParts.length > 1 ? nameParts.slice(1).join(" ") : null,
+          source: "direct",
+        },
+        { onConflict: "property_id,email" }
+      );
+
+      try {
+        await sendHostNotification({
+          property: { name: property.name, user_id: property.user_id },
+          booking: { id: booking.id },
+          guestName: guest_name.trim(),
+          guestEmail: guest_email,
+          guestPhone: guest_phone,
+          checkIn: check_in,
+          checkOut: check_out,
+          totalPrice: total,
+          nights,
+        });
+        await sendGuestConfirmation({
+          guestName: guest_name.trim(),
+          guestEmail: guest_email,
+          propertyName: property.name,
+          checkIn: check_in,
+          checkOut: check_out,
+          totalPrice: total,
+        });
+      } catch (emailErr) {
+        console.error("Prototype booking emails failed:", emailErr);
+      }
+
+      return NextResponse.json({ success: true, booking_id: booking.id });
+    }
+
+    const { appUrl } = requireStripeCheckoutEnv();
+    const totalInCents = Math.round(total * 100);
     if (totalInCents < 50) {
       return NextResponse.json({ error: "Total is too low for checkout" }, { status: 400 });
     }
@@ -165,9 +233,10 @@ export async function POST(req: Request) {
       guest_name: guest_name ?? null,
       check_in,
       check_out,
-      total_price: price.total,
+      total_price: total,
       status: "pending",
       stripe_session_id: session.id,
+      reward_code_used: rewardCodeNormalized ?? null,
     });
 
     return NextResponse.json({ url: session.url });
