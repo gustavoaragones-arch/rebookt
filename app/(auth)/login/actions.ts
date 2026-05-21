@@ -2,27 +2,24 @@
 
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { env } from "@/lib/env";
 
 export async function loginAction(formData: FormData) {
   const email = String(formData.get("email") ?? "").trim();
+  const password = String(formData.get("password") ?? "");
+
   if (!email) {
     redirect("/login?error=missing-email");
   }
-
-  const supabase = await createClient();
-  const origin = env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
-
-  const { error } = await supabase.auth.signInWithOtp({
-    email,
-    options: {
-      emailRedirectTo: `${origin}/auth/callback?next=/dashboard`,
-    },
-  });
-
-  if (error) {
-    redirect("/login?error=send-failed");
+  if (!password) {
+    redirect("/login?error=missing-password");
   }
 
-  redirect("/login?check=email");
+  const supabase = await createClient();
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+  if (error) {
+    redirect("/login?error=invalid-credentials");
+  }
+
+  redirect("/dashboard");
 }
